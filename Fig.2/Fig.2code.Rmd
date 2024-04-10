@@ -1,0 +1,130 @@
+---
+title: "Fig.2 cg"
+author: "XL"
+date: "4/10/2024"
+output: html_document
+---
+
+Here's the cleaned-up R Markdown code:
+
+```{r, echo=FALSE}
+# Load libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(data.table)
+library(RColorBrewer)
+library(scales)
+```
+
+```{r}
+# Read data
+Timed <- read.flowSet(path = 'Fig.2data/')
+Tdata <- flowSet2LongDf(Timed, idInfo=list("File" = ".fcs"))
+Tdata <- as.data.frame(Tdata)
+
+# Merge with key and add ID column
+key <- fread('key.csv')
+Tdata <- merge(key, Tdata, by = 'File',  all.y = TRUE) %>%
+  mutate(ID = row_number())
+
+# Subset data
+Tdata_sub <- subset(Tdata, Tb159Di < quantile(Tb159Di, 0.95) & Tb159Di > quantile(Tb159Di, 0.05))
+
+bin <- 1:10
+Tdata_sub$bin <- cut(asinh(Tdata_sub$Tb159Di/5), breaks = 10, labels = bin)
+
+# Plot violin plot showing bins
+ggplot(Tdata_sub, aes(bin, Yb172Di/5, color = factor(bin))) +
+  rasterise(geom_jitter(alpha = 0.5), dpi = 300) +
+  geom_violin() +
+  facet_wrap(~Cycle, ncol = 5) +
+  scale_color_brewer(palette = "RdYlBu") +
+  ylab('Anti-GFP-ACED') +
+  xlab('Anti-GFP-2°Ab') +
+  scale_y_continuous(trans = 'asinh', limits = c(0, 10000), labels= function(x) x*5, breaks = c(1, 10, 100, 1000, 10000)) +
+  theme_bw() +
+  theme(legend.key.size = unit(0.35, 'cm'))
+
+# Save plot
+ggsave(filename = 'bindata_asinh.pdf', width = 10, height = 3)
+```
+
+```{r}
+#median change for each bin
+Tdata_sub %>% dcast.data.table(formula = Cycle ~ bin, value.var = 'Yb172Di', fun.aggregate = median) %>% melt.data.table(id.vars = 'Cycle') %>%
+  ggplot(aes(Cycle, value, color = variable))+
+  geom_line()+
+  geom_point()+
+  scale_color_brewer(palette = "RdYlBu", name = 'Bin')+
+  ylab('Medians')+
+  theme_bw()+
+  theme(legend.key.size = unit(0.35, 'cm'))
+  ggsave(filename = 'median.pdf', width = 3, height = 2)
+
+#signal to noise ratio
+Tdata_m = Tdata_sub %>% dcast.data.table(formula = Cycle ~ bin, value.var = 'Yb172Di', fun.aggregate = median)
+
+as.data.frame(t(rbind(t(Tdata_m)[1,], sweep(t(Tdata_m)[2:11,],2,t(Tdata_m)[2,],FUN="/")))) %>% melt(id.vars = 'V1') %>%
+  ggplot(aes(V1, value, color = variable))+
+  geom_line()+
+  geom_point()+
+  scale_color_brewer(palette = "RdYlBu", name = 'Bin')+
+  ylab('S/N ratio')+
+  xlab('Cycle')+
+  theme_bw()+
+  theme(legend.key.size = unit(0.35, 'cm'))
+  ggsave(filename = 'snratio.pdf', width = 3, height = 2)
+
+#fold change for each bin
+Tdata_n = Tdata_sub %>% dcast.data.table(formula =  bin~Cycle, value.var = 'Yb172Di', fun.aggregate = median)
+
+Tdata_n$bin = as.integer(Tdata_n$bin)
+as.data.frame(t(rbind(t(Tdata_n)[1,], sweep(t(Tdata_n)[2:6,],2,t(Tdata_n)[2,],FUN="/")))) %>% melt(id.vars = 'V1') %>%
+  ggplot(aes(V1, value, color = variable))+
+  geom_point(stat = "identity", alpha = 0.5)+
+  geom_line()+  
+  scale_fill_brewer(palette = "Paired", name = 'Cycle')+
+  ylab('Fold change to cycle 1')+
+  xlab('Bin')+
+  scale_x_continuous(breaks=c(1:10))+
+  theme_bw()+
+  theme(legend.key.size = unit(0.35, 'cm'))
+  ggsave(filename = 'foldline.pdf', width = 3, height = 2)
+  
+  
+#ratio to bin10  
+Tdata_r = Tdata_sub %>% dcast.data.table(formula = Cycle ~ bin, value.var = 'Yb172Di', fun.aggregate = median) %>% melt.data.table(id.vars = 'Cycle') %>% dcast(formula = 'Cycle~variable')
+  Tdata_r = as.matrix(Tdata_r)
+  Tdata_r[,c(2:11)] = Tdata_r[,-
+
+1]/Tdata_r[,11]
+  
+ as.data.frame(Tdata_r) %>% melt(id.var = 'Cycle') %>%
+   ggplot(aes(Cycle, value, color = variable))+
+   geom_line()+
+   geom_point()+
+   scale_color_brewer(palette = "RdYlBu", name = 'Bin')+
+   theme_bw()+
+  theme(legend.key.size = unit(0.35, 'cm'))
+  ggsave(filename = 'ratio.pdf', width = 3, height = 2)
+  
+```
+
+```{r corr}
+# Define cycle numbers
+cycle_numbers <- c(1, 50, 100, 200, 500)
+
+# Initialize a list to store correlation results
+cor_results <- list()
+
+# Calculate correlations for each cycle number
+for (cycle_num in cycle_numbers) {
+  Tdata_cycle <- subset(Tdata, Cycle == cycle_num)
+  cor_results[[as.character(cycle_num)]] <- cor(asinh(Tdata_cycle$Yb172Di/5), asinh(Tdata_cycle$Tb159Di/5), method = 'pearson')
+}
+
+# Output correlation results
+cor_results
+```
+```

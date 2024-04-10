@@ -1,0 +1,343 @@
+---
+title: "Example Workflow TSNE, Phenograph, Heatmap"
+author: "Vitoz"
+date: "01/12/2016"
+output:
+  html_document: default
+  html_notebook: default
+  pdf_document: default
+---
+
+# Aim
+This script describes an example analysis for cyTOF data in R. 
+It is in a notebook form that allows you to easely comment the plots you do and print it in the end as a report. Consider this to be a form of computational lab journal.
+
+## Start the script
+
+```{r Libraries, include=FALSE}
+library('data.table')
+library('Rtsne')
+library(threejs)
+library('RColorBrewer')
+library(dplyr)
+library(dtplyr)
+library(gplots)
+library(cba)
+library(ggplot2)
+library(Rtsne)
+library(flowCore)
+library(CytoDx)
+library('umap')
+library(ggrastr)
+```
+
+
+
+## Settings
+Set your project specific folders and settings
+```{r Settings}
+# input files: paths to your input and output folder
+fcs_folder = 'Fig.3_data/'
+
+# the random seed
+rand_seed = 1234
+
+# Should the script use only the cells subsampled at the tsne step?
+subsampled_cells_only = F
+
+
+# For plotting only: removes outliers with values higher than xx% of all cells
+censor_val = 0.999
+
+# point size for plots
+size = 0.1
+
+# load channel and well names
+namesheet = fread('name_dict.csv')
+wellsheet = fread('well_dict.csv')
+
+```
+
+## Start the script
+### Load the data
+```{r Load the data}
+# load data
+
+fcs_files = list.files(fcs_folder)
+dat = read.flowSet(paste0("Fig.3_data/",fcs_files))
+dat = set2DF(dat, fcs_files, y = NULL)
+
+
+# give each cell an own ID
+dat$id = seq_along(dat$xSample)
+dat = as.data.table(dat)
+setkey(dat, id)
+
+# id by sample
+dat[, id_con := sequence(.N), by = xSample]
+
+
+# 'melt' data: make a column 'channel' with all the channels and a column 'counts' with all the counts
+dat = melt.data.table(dat, id.vars=c('xSample','id', 'id_con'), variable.name='channel', value.name = 'counts' , variable.factor = FALSE)
+
+
+```
+
+
+### Create a metadata table
+Here we simply extract metadata from the filename - however it is entirely possible to create such a table in excel, save it as a csv and load it here.
+
+Using 'merge' the metadata can allways be added whenever needed! This is extremely helpfull, e.g. when looking at clinical data.
+
+```{r}
+dat_meta = data.table(xSample=dat[, unique(xSample)])
+datameta = merge(dat, dat_meta,by = 'xSample')
+datameta$xSample = substr(datameta$xSample, 5, 7)
+datameta$xSample = sub("_.*", "", datameta$xSample)
+datameta = merge(datameta, wellsheet, by.x = 'xSample', by.y = 'Well')
+```
+
+
+
+### Clean and transform the data
+```{r Clean and transform data}
+# remove the NA counts
+datameta = subset(datameta, !is.na(counts))
+
+
+### calculate transformed counts ####
+datameta[ , counts_transf := asinh(counts/5)]
+```
+
+```{r add real anbibody antibody name}
+datameta = merge(datameta, namesheet, by = 'channel')
+```
+
+```{r}
+#setting color
+cols = rev(brewer.pal(11,'RdYlBu'))
+cmap = colorRampPalette(cols)
+cmap.w = colorRampPalette(rev(brewer.pal(11,'RdYlBu')))
+
+cols2 = rev(brewer.pal(11,'Spectral'))
+cmap2 = colorRampPalette(cols2)
+cmap.w2 = colorRampPalette(rev(brewer.pal(11,'Spectral')))
+
+```
+
+```{r umap}
+# Set parameters
+dt <- "norm"
+ct <- "norm"
+
+#sample 1000 per condition
+datasub = datameta[id_con < 1001]
+setkey(datasub, id)
+
+#normalization
+datasub$norm = ave(datasub$counts_transf, datasub$marker, FUN=function(x) (x-quantile(x, 0.001))/(quantile(x, 0.999)-quantile(x, 0.001))) 
+datasub$norm[datasub$norm>1] = 1
+datasub$norm[datasub$norm<0] = 0
+
+#make t
+dataf = dcast.data.table(datasub, formula = id ~ marker, value.var = c(dt))
+rowname = dataf$id
+datamatrix = as.matrix(dataf[,-1])
+rownames(datamatrix) = rowname
+
+emtumap <- umap(datamatrix, n_neighbors = 100, min_dist = 0.6, n_components = 2)
+umapvalue <- emtumap$layout
+rownames(umapvalue) <- rowname
+colnames(umapvalue) <- c("umap1", "umap2")
+umapvalue <- as.data.frame(umapvalue)
+umapvalue <- tibble::rownames_to_column(umapvalue, "VALUE")
+write.csv2(umapvalue, file = "umap_coord.csv")
+
+# Plot UMAP
+umapvalue$VALUE <- as.character(umapvalue$VALUE)
+datameta$id <- as.character(datameta$id)
+umapplot <- merge(datameta, umapvalue, by.x = "id", by.y = "VALUE")
+umapplot$sampleid <- paste0(umapplot$Con, umapplot$time)
+umapplot$true_time <- umapplot$time
+umapplot$true_time[umapplot$Con == "EMT"] <- umapplot$true_time[umapplot$Con == "EMT"] - 14
+
+umapplot$marker <- as.factor(umapplot$marker)
+umapplot$marker <- factor(umapplot$marker, levels = c("E-cadherin", "CK14", "EpCAM", "b-catenin", "vimentin", "CD44", "Zeb1", "Snail", "IdU", "cyclinB1", "p-CDK1", "p-HH3", "p-SMAD2", "p-ERK", "p-p38", "p-JNK", "p-NFKB(pS529)", "p-STAT3", "p-NFKB(pS536)", "p-AKT(pS308)", "EGFR", "p-MEK", "p-p90RSK", "p-S6", "p-cJUN", "p-PLCg2", "fibronectin", "p-AKT(pS473)", "p-STAT5", "p-RB", "p-SMAD2/3", "SMAD4"))
+
+p1 <- ggplot(umapplot, aes(umap1, umap2, color = get(ct))) +
+  rasterise(geom_point(size = 0.01), dpi = 300) +
+  facet_wrap(~marker, ncol = 6) +
+  scale_color_gradientn(colours = cmap.w(75), name = "Value", limits = c(0, 1)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.ticks = element_blank(), axis.text = element_blank(), legend.text = element_blank(), text = element_text(size = 20))
+
+p2 <- ggplot(umapplot, aes(umap1, umap2, color = true_time, shape = Con)) +
+  geom_point(size = 0.2, alpha = 0.3) +
+  theme_bw() +
+  scale_color_gradientn(colours = cmap.w2(75), name = "EMT", limits = c(-14, 14))
+
+p3 <- ggplot(umapplot, aes(umap1, umap2, color = as.factor(true_time + 14))) +
+  rasterise(geom_point(size = 0.2, alpha = 0.3), dpi = 300) +
+  facet_wrap(~(true_time + 14), nrow = 2) +
+  theme_bw() +
+  scale_color_discrete("Time") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.ticks = element_blank(), axis.text = element_blank(), legend.text = element_blank(), text = element_text(size = 20))
+
+# Plot to PDF
+pdf(file = file.path("EMT_UMAP.pdf"), width = 12, height = 12)
+print(p1)
+dev.off()
+
+pdf(file = file.path("EMT_CELL_UMAP.pdf"), width = 5, height = 4)
+print(p2)
+dev.off()
+
+pdf(file = file.path("EMT_UMAP_timepoint.pdf"), width = 12, height = 4.5)
+print(p3)
+dev.off()
+```
+
+
+```{r SCORPIUS}
+library(SCORPIUS)
+
+# Define EMT phenomarker
+EMT_phenomarker <- c("CK14", "E-cadherin", "EpCAM", "EGFR", "vimentin", "Zeb1")
+
+# Extract relevant data for SCORPIUS
+traj_mark_data <- datamatrix[, EMT_phenomarker]
+
+# Extract sample information
+sampleinfo <- unique(datasub[marker %in% EMT_phenomarker, c("id", "xSample")])
+sampleinfo$set <- as.numeric(as.factor(sampleinfo$xSample))
+
+# Reduce dimensionality and infer trajectory with SCORPIUS
+space <- reduce_dimensionality(datamatrix[, colnames(datamatrix) %in% EMT_phenomarker], "pearson", ndim = 3, num_landmarks = 100)
+traj <- infer_trajectory(space, k = 10)
+
+# Visualize trajectory
+draw_trajectory_plot(
+  space,
+  path = traj$path,
+  progression_group = sampleinfo$set
+)
+
+# Generate trajectory heatmap
+trajhmap <- draw_trajectory_heatmap(
+  datamatrix,
+  traj$time,
+  show_labels_row = TRUE
+)
+
+# Plot trajectory over pseudotime
+ptime <- as.data.frame(traj$time)
+colnames(ptime) <- "pseudotime"
+ptime$id <- rownames(ptime)
+
+merge(datasub, ptime[ptime$pseudotime > 0.1 & ptime$pseudotime < 0.9, ], by = 'id') %>%
+  ggplot(aes(pseudotime, norm)) +
+  stat_smooth(aes(y = norm, x = pseudotime), method = loess) +
+  facet_wrap(~marker) +
+  theme_bw()
+ggsave(filename = file.path('scorpius_trajectory.pdf'), width = 6, height = 6)
+
+
+# Make Two-way SCORPIUS plots
+scorp2 <- merge(datasub, ptime, by = 'id')
+scorp2[scorp2$Con == 'EMT', ][, 11] <- -scorp2[scorp2$Con == 'EMT', ][, 11]
+scorp2$rank2 <- as.numeric(as.factor(scorp2$pseudotime))
+
+# Plot two-way SCORPIUS trajectory
+clean_scor <- scorp2[abs(pseudotime) > 0.1 & abs(pseudotime) < 0.9]
+clean_scor$rank2 <- as.numeric(as.factor(clean_scor$pseudotime))
+clean_scor$true_time <- clean_scor$time
+clean_scor$true_time[clean_scor$Con == 'EMT'] <- clean_scor$true_time[umapplot$Con == 'EMT'] - 14
+
+ggplot(clean_scor)+
+    geom_smooth(data = clean_scor[marker %in% c('vimentin','E-cadherin','CK14','CD44', 'p-ERK')], aes(rank2, norm*70-40, color = marker), method = 'loess', n = 100, se = TRUE, span = 0.35, linetype = "dashed")+
+    geom_smooth(data = clean_scor[marker %in% c('Zeb1')], aes(rank2, norm*70-40, color = marker), method = 'loess', n = 100, se = TRUE, span = 0.35, size = 2)+
+    ylim(-14,14)+
+    theme_bw()+
+    theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.ticks = element_blank(), axis.text = element_blank())+
+    xlab('Signed pseudotime')+
+    ylab('Normalized ion counts')
+  ggsave('signed_scorpius_trajectory.pdf', width = 8, height = 6)
+```
+
+
+
+```{r violin plot}
+datasub$true_time = datasub$time
+datasub$true_time[datasub$Con == 'EMT'] = datasub$true_time[datasub$Con == 'EMT'] - 14
+
+merge(datasub, ptime[ptime$pseudotime > 0.1 & ptime$pseudotime < 0.9,], by = 'id')  %>%
+  ggplot(aes(as.factor(true_time+14), pseudotime, fill = as.factor(true_time+14)))+
+           geom_violin()+
+  xlab('Time')+
+  ylab('Unsigned pseudotime')+
+  scale_fill_discrete('Time')+
+  theme_bw()+
+  theme(text = element_text(size = 20))
+  
+ggsave('violin_time.pdf', width = 12, height = 4)
+```
+
+```{r zeb1 cyclin b plots}
+# Reshape data
+bidata <- datasub %>%
+  dcast.data.table(formula = 'id + Con + time + true_time ~ marker', value.var = 'counts_transf') # %>%subset(true_time > -1)
+
+# Plot Zeb1 vs CyclinB1
+plot_Zeb1_CyclinB1 <- ggplot(bidata, aes(Zeb1, cyclinB1, color = as.factor(true_time + 14))) +
+  geom_point(size = 0.5, alpha = 0.4) +
+  geom_abline(slope = 7/6, intercept = 1, color = 'blue', linetype = 'dashed', alpha = 0.5) +
+  facet_wrap(~true_time, nrow = 2) +
+  xlab('Zeb1') +
+  ylab('Cyclin B1') +
+  scale_color_discrete("MET time") +
+  theme_bw() +
+  scale_y_continuous(limits = c(0, 8), labels = function(x) sinh(x) * 5, breaks = c(asinh(1/5), asinh(10/5), asinh(100/5), asinh(1000/5), asinh(10000/5))) +
+  scale_x_continuous(limits = c(0, 8), labels = function(x) sinh(x) * 5, breaks = c(asinh(1/5), asinh(10/5), asinh(100/5), asinh(1000/5), asinh(10000/5))) +
+  theme(text = element_text(size = 20))
+
+ggsave('MET_z_c_asinh.pdf', plot_Zeb1_CyclinB1, width = 16, height = 5)
+
+# Set 'cyclic' variable
+bidata$cyclic <- 0
+bidata[bidata$cyclinB1 > 7/6 * bidata$Zeb1 + 1, ][, 37] <- 1
+
+# Plot vimentin vs MET time with 'cyclic' factor
+plot_vimentin <- ggplot(bidata[true_time > -1], aes(as.factor(true_time), vimentin, fill = as.factor(cyclic))) +
+  geom_boxplot() +
+  xlab('MET time (Days)') +
+  ylab('vimentin') +
+  scale_y_continuous(limits = c(0, 8), labels = function(x) sinh(x) * 5, breaks = c(asinh(1/5), asinh(10/5), asinh(100/5), asinh(1000/5), asinh(10000/5))) +
+  scale_fill_discrete(name = "Gate", labels = c("Zeb1 high, CyclinB1 low", "Zeb1 low, CyclinB1 high")) +
+  theme_bw() +
+  theme(text = element_text(size = 20))
+
+# Plot E-cadherin vs MET time with 'cyclic' factor
+plot_Ecadherin <- ggplot(bidata[true_time > -1], aes(as.factor(true_time), get('E-cadherin'), fill = as.factor(cyclic))) +
+  geom_boxplot() +
+  xlab('MET time (Days)') +
+  ylab('E-cadherin') +
+  scale_y_continuous(limits = c(0, 8), labels = function(x) sinh(x) * 5, breaks = c(asinh(1/5), asinh(10/5), asinh(100/5), asinh(1000/5), asinh(10000/5))) +
+  scale_fill_discrete(name = "Gate", labels = c("Zeb1 high, CyclinB1 low", "Zeb1 low, CyclinB1 high")) +
+  theme_bw() +
+  theme(text = element_text(size = 20))
+
+# Plot CK14 vs MET time with 'cyclic' factor
+plot_CK14 <- ggplot(bidata[true_time > -1], aes(as.factor(true_time), CK14, fill = as.factor(cyclic))) +
+  geom_boxplot() +
+  xlab('MET time (Days)') +
+  ylab('CK14') +
+  scale_y_continuous(limits = c(0, 8), labels = function(x) sinh(x) * 5, breaks = c(asinh(1/5), asinh(10/5), asinh(100/5), asinh(1000/5), asinh(10000/5))) +
+  scale_fill_discrete(name = "Gate", labels = c("Zeb1 high, CyclinB1 low", "Zeb1 low, CyclinB1 high")) +
+  theme_bw() +
+  theme(text = element_text(size = 20))
+
+# Save plots to PDF
+pdf('zeb1cyclin_3.pdf', width = 28.5, height = 6)
+grid.arrange(plot_vimentin, plot_Ecadherin, plot_CK14, nrow = 1)
+dev.off()
+```

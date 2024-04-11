@@ -1,0 +1,231 @@
+---
+title: "Lun et al., 2024, Nature Biotechnology, Fig.4 plot regeneration"
+author: "Xiaokang Lun"
+date: "04/10/2024"
+output: html_document
+---
+
+```{r Libraries, include=FALSE}
+library('data.table')
+library('Rtsne')
+library(threejs)
+library('RColorBrewer')
+library(dplyr)
+library(dtplyr)
+library(gplots)
+library(cba)
+library(ggplot2)
+library(Rtsne)
+library(flowCore)
+library(CytoDx)
+library('umap')
+library(scales)
+library(bossMaps)
+library(tidyverse)
+library(viridis)
+library(patchwork)
+library(hrbrthemes)
+library(fmsb)
+library(colormap)
+library(forcats)
+library(ggridges)
+```
+
+```{r Settings}
+# input files: paths to your input and output folder
+fcs_folder = 'full/'
+
+# the random seed
+rand_seed = 1234
+
+# For plotting only: removes outliers with values higher than xx% of all cells
+censor_val = 0.999
+
+# point size for plots
+size = 0.1
+
+# define channels
+namesheet = fread('name_dict2.csv')
+```
+
+```{r Load the data}
+# load data
+fcs_files = list.files(fcs_folder)
+dat = read.flowSet(paste0("full/",fcs_files))
+dat = set2DF(dat, fcs_files, y = NULL)
+
+# give each cell an own ID
+dat$id = seq_along(dat$xSample)
+
+dat = as.data.table(dat)
+setkey(dat, id)
+# 'melt' data: make a column 'channel' with all the channels and a column 'counts' with all the counts
+dat = melt.data.table(dat, id.vars=c('xSample','id'), variable.name='channel', value.name = 'counts' , variable.factor = FALSE)
+```
+
+```{r create metadata}
+dat_meta = data.table(xSample=dat[, unique(xSample)])
+datameta = merge(dat, dat_meta,by = 'xSample')
+```
+
+```{r Clean and transform data}
+# remove the NA counts
+datameta = subset(datameta, !is.na(counts))
+
+### calculate transformed counts ####
+datameta[ , counts_transf := asinh(counts/5)]
+```
+
+```{r add real anbibody antibody name and remove crap channels}
+unique(datameta$channel)
+datameta = merge(datameta, namesheet, by = 'channel')
+```
+
+```{r}
+#setting color
+cols = rev(brewer.pal(11,'RdYlBu'))
+cmap = colorRampPalette(cols)
+cmap.w = colorRampPalette(rev(brewer.pal(11,'RdYlBu')))
+```
+
+```{r plot overaly histogram TCR stimulation}
+#data reshaping
+samplesheet = fread('well_dict.csv')
+datameta = merge(datameta, samplesheet, by.x = 'xSample', by.y = 'Name', all.x = TRUE)
+datameta$time = as.factor(datameta$time)
+
+#plot multi histograms
+ggplot(datameta[amp == 'Linear'], aes(x = counts, y = fct_rev(time), fill = time)) +
+  facet_wrap(~marker, nrow = 5)+
+  geom_density_ridges(alpha = .5)+
+  theme_bw()+
+  scale_x_continuous(trans = 'asinh', limits = c(0,10000), labels= function(x) x*5, breaks=c(1,10,100,1000, 10000))+
+  xlab('Ion counts')+
+  ylab('')
+ggsave(file = file.path('TCR1_asinh.pdf'), height = 8, width = 9)
+```
+
+```{r plot selected channels}
+unique(datameta$marker)
+datameta$marker = factor(datameta$marker, levels = c("p-CD247", "p-CD28",   "p-ZAP70","p-LAT","p-SLP76", "p-PLCg1", "p-PLCg2", "p-BTK/ITK","p-MEK","p-ERK","p-p90RSK","p-S6","p-SMAD2", "p-STAT1", "p-STAT3","p-STAT5","p-p38","p-MAPKAPK2","p-JNK", "p-cJUN", "p-AKT(pS308)","p-AKT(pS473)","p-NFKB(pS529)" ,  "p-NFKB(pS536)" , "p-NFAT2" ,   "cyclinB1"  ,"cyclinE", "p-CDK1", "p-HH3" , "p-RB" ) )
+ggplot(datameta[amp == 'Linear'][marker %in% c("p-CD247", "p-CD28",   "p-ZAP70","p-LAT","p-SLP76", "p-PLCg1",  "p-BTK/ITK","p-MEK","p-ERK","p-p90RSK","p-S6","p-SMAD2") ], aes(x = counts, y = fct_rev(time), fill = time)) +
+  facet_wrap(~marker, nrow = 2)+
+  geom_density_ridges(alpha = .5)+
+  theme_bw()+
+  scale_x_continuous(trans = 'asinh', limits = c(0,30000), labels= function(x) x*5, breaks=c(1,10,100,1000, 10000))+
+  xlab('Arcsinh transformed ion counts cofactor = 5')+
+  ylab('TCR stimulation time')+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), text = element_text(size = 20))
+ggsave('TCR_12markers_asinh.pdf', width = 18, height = 5)
+
+
+```
+
+```{r linear vs. unamplified fold change plot}
+#data reshaping
+data_mean = datameta %>%
+  group_by(marker, time, amp, channel) %>%
+  summarise_at(.vars = c("counts", "counts_transf"), .funs = mean)
+data_mean = as.data.frame(data_mean)
+
+#Linked Boxplot
+data_mean[data_mean$time == '0',] %>%dcast(formula = 'marker ~ amp', value.var = 'counts')%>%
+  ggplot(aes(x=Linear, y=marker)) +
+    geom_boxplot(data = datameta[amp %in% c("non-amp")][time == 0], 
+                 aes(x = counts, y = marker), alpha = 0.3, fill ="#08589e", outlier.shape = NA)+
+    geom_boxplot(data = datameta[amp %in% c("Linear")][time == 0], 
+                 aes(x = counts, y = marker), alpha = 0.3, fill ="#7bccc4", outlier.shape = NA)+
+    geom_boxplot(data = datameta[amp %in% c("Branching")][time == 0][marker == 'p-AKT(pS308)'], 
+                 aes(x = counts, y = marker), alpha = 0.3, fill ="red", outlier.shape = NA)+
+    geom_segment(aes(x= get('non-amp') ,xend=Linear, y=marker, yend=marker, 
+                    color = Linear /get('non-amp')), size = 2) +
+    geom_segment(data = dcast(data_mean[data_mean$time == '0' & data_mean$marker == 'p-AKT(pS308)',],formula = 'marker ~ amp', value.var = 'counts'), 
+                 aes(x= get('Linear') ,xend=Branching, y=marker, yend=marker, 
+                     color = Branching/get('Linear')), size = 2) +
+  scale_x_continuous(trans = 'asinh', limits = c(0,30000), labels= function(x) x*5, breaks=c(1,10,100,1000, 10000))+
+    scale_color_gradientn(name = c('Amplification power (fold)'), 
+                          colours = colorRampPalette(brewer.pal(11,'Purples'))(75))+
+    geom_point(size=3, color="#7bccc4")+
+    geom_point(aes(x=get('non-amp'), y=marker), size=3, color="#08589e")+
+    geom_point(data = dcast(data_mean[data_mean$time == '0' & data_mean$marker == 'p-AKT(pS308)',],formula = 'marker ~ amp', value.var = 'counts'),aes(x=get('Branching'), y=marker), size=3, color="red")+
+    coord_flip() +
+    theme_bw()+
+    theme(
+      panel.grid.minor.y = element_blank(),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      panel.grid.major.x = element_blank(),
+      #axis.text = element_text( size=5 ),
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
+    )+
+
+    ylab("Markers") +
+    xlab("Ion counts")
+
+ggsave('fold_change_plot.pdf', width = 10, height = 5)
+```
+
+```{r dynamic range Fig. S7}
+datameta$norm_DR[datameta$amp == 'Branching'] = ave(datameta$counts[datameta$amp == 'Branching'], datameta$marker, FUN=function(x) (x-quantile(x, 0.001))/(quantile(x, 0.999)-quantile(x, 0.001))) 
+datameta$norm_DR[datameta$amp == 'Linear'] = ave(datameta$counts[datameta$amp == 'Linear'], datameta$marker, FUN=function(x) (x-quantile(x, 0.001))/(quantile(x, 0.999)-quantile(x, 0.001))) 
+datameta$norm_DR[datameta$amp == 'non-amp'] = ave(datameta$counts[datameta$amp == 'non-amp'], datameta$marker, FUN=function(x) (x-quantile(x, 0.001))/(quantile(x, 0.999)-quantile(x, 0.001))) 
+
+#outlier removal
+datameta_OR = datameta[datameta$norm_DR>0 & datameta$norm_DR<1]
+
+#dynamic range calculation
+DR = as.data.frame(datameta_OR %>%
+          group_by(marker, amp) %>%
+          summarise(max = max(counts),
+                    min = min(counts),
+                    range = max(counts)-min(counts)))
+
+#dynamic range plot
+ggplot(DR[DR$amp %in% c('non-amp','Linear'),], aes(marker, (max+1)/(min+1), fill = factor(amp, levels = c('non-amp','Linear'))))+
+  geom_bar(stat = "identity", color = 'black',alpha = 0.4,position = position_dodge(width=0.7),
+                   width = 0.5)+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+
+  theme(
+      panel.grid.minor.y = element_blank(),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      panel.grid.major.x = element_blank(),
+      #axis.text = element_text( size=5 ),
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
+    )+
+scale_y_continuous(trans = 'asinh', limits = c(0,30000), labels= function(x) x*5, breaks=c(1,10,100,1000, 10000))+
+  scale_fill_discrete(name = 'Amplification')+
+  ylab('Dynamic range')+
+  xlab('Markers')
+ggsave('Dynamic_range.pdf', width = 10, height = 5)
+
+#average dynamic range
+ggplot(DR[DR$amp %in% c('non-amp','Linear'),], aes(factor(amp, levels = c('non-amp','Linear')), (max+1)/(min+1), fill = factor(amp, levels = c('non-amp','Linear'))))+
+  geom_boxplot(color = 'black',alpha = 0.4)+
+  geom_jitter(alpha = 0.4, width = 0.1)+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+
+  theme(panel.grid.minor.y = element_blank(),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      panel.grid.major.x = element_blank(),
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+scale_y_continuous(trans = 'asinh', limits = c(0,30000), labels= function(x) x*5, breaks=c(1,10,100,1000, 10000))+
+  scale_fill_discrete(name = 'Amplification')+
+  ylab('Dynamic range')+
+  xlab('Markers')
+ggsave('Ave_dynamic_range.pdf', width = 3, height = 5)
+```
+
+```{r AKT pS308 Branching amplificaiton}
+ggplot(data_mean_amp[data_mean_amp$channel %in% c('176Yb'),], aes(as.double(as.character(time)), value, color = amp, group = 1))+
+  geom_line()+
+  geom_point()+
+  facet_wrap(~amp, ncol = 1)+
+  theme_bw()+
+  ylab('Fold change')+
+  xlab('Time after TCR stimulation ')
+
+ggsave(file = file.path('AKTp308_stimu.pdf'), height = 5, width = 3)
+```

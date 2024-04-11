@@ -1,17 +1,27 @@
 ---
-title: "Lun et al., 2024, Nature Biotechnology, Fig.3 plot regeneration"
+title: "Fig.2 cg"
 author: "XL"
 date: "4/10/2024"
 output: html_document
 ---
 
-```{r, echo=FALSE}
+Here's the cleaned-up R Markdown code:
+
+```{r}
 # Load libraries
 library(dplyr)
 library(tidyr)
 library(ggplot2)
 library(data.table)
+library(devtools)
 library(RColorBrewer)
+library(BiocManager)
+library(flowCore)
+library(grappolo)
+library(shiny)
+library(CytoDx)
+library(flowSpecs)
+library(bossMaps)
 library(scales)
 ```
 
@@ -22,9 +32,8 @@ Tdata <- flowSet2LongDf(Timed, idInfo=list("File" = ".fcs"))
 Tdata <- as.data.frame(Tdata)
 
 # Merge with key and add ID column
-key <- fread('key.csv')
-Tdata <- merge(key, Tdata, by = 'File',  all.y = TRUE) %>%
-  mutate(ID = row_number())
+key = fread('key.csv')
+Tdata = merge(key,Tdata, by = 'File',  all.y = TRUE)
 
 # Subset data
 Tdata_sub <- subset(Tdata, Tb159Di < quantile(Tb159Di, 0.95) & Tb159Di > quantile(Tb159Di, 0.05))

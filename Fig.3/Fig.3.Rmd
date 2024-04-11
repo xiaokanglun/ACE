@@ -31,10 +31,6 @@ library('umap')
 library(ggrastr)
 ```
 
-
-
-## Settings
-Set your project specific folders and settings
 ```{r Settings}
 # input files: paths to your input and output folder
 fcs_folder = 'Fig.3_data/'
@@ -58,8 +54,6 @@ wellsheet = fread('well_dict.csv')
 
 ```
 
-## Start the script
-### Load the data
 ```{r Load the data}
 # load data
 
@@ -83,13 +77,7 @@ dat = melt.data.table(dat, id.vars=c('xSample','id', 'id_con'), variable.name='c
 
 ```
 
-
-### Create a metadata table
-Here we simply extract metadata from the filename - however it is entirely possible to create such a table in excel, save it as a csv and load it here.
-
-Using 'merge' the metadata can allways be added whenever needed! This is extremely helpfull, e.g. when looking at clinical data.
-
-```{r}
+```{r Create a metadata table}
 dat_meta = data.table(xSample=dat[, unique(xSample)])
 datameta = merge(dat, dat_meta,by = 'xSample')
 datameta$xSample = substr(datameta$xSample, 5, 7)
@@ -97,13 +85,9 @@ datameta$xSample = sub("_.*", "", datameta$xSample)
 datameta = merge(datameta, wellsheet, by.x = 'xSample', by.y = 'Well')
 ```
 
-
-
-### Clean and transform the data
 ```{r Clean and transform data}
 # remove the NA counts
 datameta = subset(datameta, !is.na(counts))
-
 
 ### calculate transformed counts ####
 datameta[ , counts_transf := asinh(counts/5)]

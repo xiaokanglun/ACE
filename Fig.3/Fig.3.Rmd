@@ -1,18 +1,9 @@
 ---
-title: "Example Workflow TSNE, Phenograph, Heatmap"
-author: "Vitoz"
-date: "01/12/2016"
-output:
-  html_document: default
-  html_notebook: default
-  pdf_document: default
+title: "Lun et al., 2024, Nature Biotechnology, Fig.3 plot regeneration"
+author: "Xiaokang Lun"
+date: "04/10/2024"
+output: html_document
 ---
-
-# Aim
-This script describes an example analysis for cyTOF data in R. 
-It is in a notebook form that allows you to easely comment the plots you do and print it in the end as a report. Consider this to be a form of computational lab journal.
-
-## Start the script
 
 ```{r Libraries, include=FALSE}
 library('data.table')

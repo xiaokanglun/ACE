@@ -1,11 +1,9 @@
 ---
-title: "Fig.2 cg"
+title: "Lun et al., 2024, Nature Biotechnology, Fig.3 plot regeneration"
 author: "XL"
 date: "4/10/2024"
 output: html_document
 ---
-
-Here's the cleaned-up R Markdown code:
 
 ```{r, echo=FALSE}
 # Load libraries
